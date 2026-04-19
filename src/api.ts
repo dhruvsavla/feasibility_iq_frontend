@@ -1,8 +1,8 @@
 import axios, { AxiosError } from 'axios'
 import { FeasibilityReport, StudyInput } from './types'
 
-const BASE_URL = 'http://localhost:8000'
-
+const BASE_URL = 'https://feasibility-iq-backend.onrender.com'
+// ldlld
 function toBackendPayload(study: StudyInput) {
   return {
     ...study,
@@ -15,7 +15,6 @@ function toBackendPayload(study: StudyInput) {
     })),
   }
 }
-
 export async function analyzeStudy(study: StudyInput): Promise<FeasibilityReport> {
   try {
     const response = await axios.post<FeasibilityReport>(`${BASE_URL}/api/analyze`, toBackendPayload(study))
