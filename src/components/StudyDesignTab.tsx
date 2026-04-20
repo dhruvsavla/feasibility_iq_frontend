@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { StudyInput } from '../types'
 import CountrySelector from './CountrySelector'
 import { THERAPEUTIC_AREAS, difficultyColor, difficultyLabel } from '../data/therapeuticAreas'
 import { getStudyWarnings, hasBlockingWarning } from '../utils/studyValidation'
+import { extractProtocol } from '../api'
 
 interface Props {
   studyInput: StudyInput
@@ -114,6 +115,46 @@ const TagButton: React.FC<{ label: string; selected: boolean; onClick: () => voi
 
 const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isLoading }) => {
   const [endpointHint, setEndpointHint] = useState<string | null>(null)
+  const [extracting, setExtracting] = useState(false)
+  const [extractError, setExtractError] = useState<string | null>(null)
+  const [extractedFields, setExtractedFields] = useState<string[]>([])
+  const [extractionNotes, setExtractionNotes] = useState<string | null>(null)
+  const [dragOver, setDragOver] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleProtocolFile = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      setExtractError('Please upload a PDF file.')
+      return
+    }
+    setExtracting(true)
+    setExtractError(null)
+    setExtractedFields([])
+    setExtractionNotes(null)
+    try {
+      const result = await extractProtocol(file)
+      setStudyInput((prev) => {
+        const updated = { ...prev }
+        if (result.study_name) updated.study_name = result.study_name
+        if (result.therapeutic_area) updated.therapeutic_area = result.therapeutic_area
+        if (result.indication) updated.indication = result.indication
+        if (result.intervention) updated.intervention = result.intervention
+        if (result.duration_months != null) updated.duration_months = result.duration_months
+        if (result.followup_months != null) updated.followup_months = result.followup_months
+        if (result.sample_size != null) updated.sample_size = result.sample_size
+        if (result.num_sites != null) updated.num_sites = result.num_sites
+        if (result.endpoints.length > 0) updated.endpoints = result.endpoints
+        if (result.eligibility_criteria) updated.eligibility_criteria = result.eligibility_criteria
+        return updated
+      })
+      setExtractedFields(result.extracted_fields)
+      setExtractionNotes(result.extraction_notes)
+    } catch (err) {
+      setExtractError(err instanceof Error ? err.message : 'Extraction failed')
+    } finally {
+      setExtracting(false)
+    }
+  }
 
   const update = <K extends keyof StudyInput>(key: K, value: StudyInput[K]) => {
     setStudyInput((prev) => ({ ...prev, [key]: value }))
@@ -155,6 +196,89 @@ const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isL
 
   return (
     <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Protocol Upload */}
+      <div style={cardStyle}>
+        <h3 style={sectionTitleStyle}>Auto-Fill from Protocol PDF</h3>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault()
+            setDragOver(false)
+            const file = e.dataTransfer.files[0]
+            if (file) handleProtocolFile(file)
+          }}
+          onClick={() => fileInputRef.current?.click()}
+          style={{
+            border: `2px dashed ${dragOver ? 'var(--cyan)' : 'rgba(255,255,255,0.12)'}`,
+            borderRadius: 10,
+            padding: '28px 20px',
+            textAlign: 'center',
+            cursor: 'pointer',
+            backgroundColor: dragOver ? 'rgba(6,182,212,0.06)' : 'var(--slate-light)',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf"
+            style={{ display: 'none' }}
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) handleProtocolFile(file)
+              e.target.value = ''
+            }}
+          />
+          {extracting ? (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+              <div style={{
+                width: 24, height: 24,
+                border: '3px solid var(--slate)',
+                borderTop: '3px solid var(--cyan)',
+                borderRadius: '50%',
+                animation: 'spin 0.7s linear infinite',
+              }} />
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Extracting study parameters…</div>
+            </div>
+          ) : (
+            <>
+              <div style={{ fontSize: 28, marginBottom: 8 }}>📄</div>
+              <div style={{ fontSize: 14, color: 'var(--text-primary)', fontWeight: 500, marginBottom: 4 }}>
+                Drop a protocol PDF here or click to browse
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                Supports ICFs, study synopses, and SAPs — fields auto-filled from the document
+              </div>
+            </>
+          )}
+        </div>
+
+        {extractError && (
+          <div style={{ fontSize: 13, color: 'var(--red)', backgroundColor: 'rgba(239,68,68,0.08)', borderRadius: 6, padding: '8px 12px' }}>
+            {extractError}
+          </div>
+        )}
+
+        {extractedFields.length > 0 && (
+          <div style={{ backgroundColor: 'rgba(6,182,212,0.08)', border: '1px solid rgba(6,182,212,0.2)', borderRadius: 8, padding: '12px 16px' }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--cyan)', marginBottom: 6 }}>
+              Extracted {extractedFields.length} field{extractedFields.length !== 1 ? 's' : ''} — review and adjust below
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: extractionNotes ? 8 : 0 }}>
+              {extractedFields.map((f) => (
+                <span key={f} style={{ fontSize: 11, backgroundColor: 'rgba(6,182,212,0.15)', color: 'var(--cyan)', borderRadius: 4, padding: '2px 8px' }}>
+                  {f.replace(/_/g, ' ')}
+                </span>
+              ))}
+            </div>
+            {extractionNotes && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{extractionNotes}</div>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* Section 1 — Study Identity */}
       <div style={cardStyle}>
         <h3 style={sectionTitleStyle}>Study Identity</h3>

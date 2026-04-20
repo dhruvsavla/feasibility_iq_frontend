@@ -47,6 +47,21 @@ export interface FeasibilityReport {
   recommendations: string[]
 }
 
+export interface ExtractedProtocol {
+  study_name: string | null
+  therapeutic_area: string | null
+  indication: string | null
+  intervention: string | null
+  duration_months: number | null
+  followup_months: number | null
+  sample_size: number | null
+  num_sites: number | null
+  endpoints: string[]
+  eligibility_criteria: string | null
+  extracted_fields: string[]
+  extraction_notes: string
+}
+
 export interface SavedReport {
   label: string
   input: StudyInput

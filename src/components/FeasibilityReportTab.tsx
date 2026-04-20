@@ -1,7 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { FeasibilityReport, StudyInput } from '../types'
 import ScoreRing from './ScoreRing'
-import WhatIfPanel from './WhatIfPanel'
+import WhatIfPanel, { DEFAULT_WEIGHTS, WeightConfig } from './WhatIfPanel'
+import { COUNTRIES } from '../data/countries'
+
+const COUNTRY_NOTES = Object.fromEntries(COUNTRIES.map((c) => [c.code, c.notes]))
 
 interface Props {
   report: FeasibilityReport
@@ -171,12 +174,18 @@ const FeasibilityReportTab: React.FC<Props> = ({
 }) => {
   const [barsVisible, setBarsVisible] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [weights, setWeights] = useState<WeightConfig>({ ...DEFAULT_WEIGHTS })
   const reportRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     setBarsVisible(false)
     const timer = setTimeout(() => setBarsVisible(true), 150)
     return () => clearTimeout(timer)
+  }, [report])
+
+  // Reset weights when a new report comes in
+  useEffect(() => {
+    setWeights({ ...DEFAULT_WEIGHTS })
   }, [report])
 
   const scoreColor = gradeColor(report.grade)
@@ -215,6 +224,19 @@ const FeasibilityReportTab: React.FC<Props> = ({
     Low: 'var(--green)',
     Medium: 'var(--yellow)',
     High: 'var(--red)',
+  }
+
+    const RISK_TOOLTIPS: Record<string, string> = {
+    recruitment:
+      'Likelihood that patient enrollment will fail to hit target size or timeline. Driven by indication prevalence, eligibility criteria restrictiveness, competition from other trials, and patients-per-site burden. Score 0–40 = manageable; 41–70 = elevated; 71+ = high risk of enrollment shortfall.',
+    data_quality:
+      'Risk of missing, incomplete, or inconsistent data that could invalidate study conclusions. Driven by endpoint types (PROs and biomarkers are hardest to capture), number of countries (EHR fragmentation), site coordinator burden, and total study duration.',
+    compliance:
+      'Risk of GCP violations, data privacy breaches, or ethics committee non-compliance. Driven by the data privacy laws across selected countries (GDPR, HIPAA, PIPL), study duration (longer studies need more audits), and the number of distinct regulatory jurisdictions.',
+    regulatory:
+      'Risk of regulatory approval delays before enrollment can begin. Driven by the number of countries, presence of high-complexity markets (NMPA, CDSCO, ANVISA, PMDA), and indication-specific post-approval obligations. Score reflects both approval timeline uncertainty and site activation complexity.',
+    budget:
+      'Risk of cost overruns exceeding 15% of planned budget. Driven by the mix of high-complexity vs low-complexity countries, specialty endpoint costs (biomarker central labs, PRO eDiaries, pharmacoeconomic data collection), CRO regional markup rates, and duration-driven site retention costs.',
   }
 
   const riskItems: Array<{ label: string; key: keyof typeof report.risks }> = [
@@ -361,12 +383,178 @@ const FeasibilityReportTab: React.FC<Props> = ({
         </div>
       </div>
 
+      {/* Row 2 — Score Breakdown */}
+      <div style={sectionCard}>
+        <h3 style={{ ...sectionTitle, marginBottom: 4 }}>How This Score Was Calculated</h3>
+        <p style={{ color: 'var(--text-secondary)', fontSize: 12, margin: '0 0 20px', lineHeight: 1.5 }}>
+          The feasibility score is derived from five specialist AI agents, each assessing a different dimension of study risk.
+          Each agent returns a risk score (0–100). The weighted average is subtracted from 100 to produce the feasibility score.
+          Lower risk → higher feasibility score.
+        </p>
+
+        {/* Formula header */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1.8fr 80px 80px 90px',
+            gap: 12,
+            padding: '0 12px 8px',
+            borderBottom: '1px solid var(--slate-light)',
+            fontSize: 11,
+            color: 'var(--text-secondary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.06em',
+          }}
+        >
+          <span>Risk Dimension</span>
+          <span style={{ textAlign: 'right' }}>Risk Score</span>
+          <span style={{ textAlign: 'right' }}>Weight</span>
+          <span style={{ textAlign: 'right' }}>Contribution</span>
+        </div>
+
+        {/* Rows */}
+        {([
+          { label: 'Recruitment', key: 'recruitment' as const, desc: 'Patient enrollment feasibility and screen failure' },
+          { label: 'Regulatory', key: 'regulatory' as const, desc: 'Approval timelines and site activation complexity' },
+          { label: 'Data Quality', key: 'data_quality' as const, desc: 'Endpoint capture risk and data completeness' },
+          { label: 'Compliance', key: 'compliance' as const, desc: 'GCP obligations and data privacy laws' },
+          { label: 'Budget', key: 'budget' as const, desc: 'Cost overrun risk and specialty endpoint costs' },
+        ] as const).map(({ label, key, desc }) => {
+          const score = report.risks[key]
+          const w = weights[key] / 100
+          const contribution = score * w
+          return (
+            <div
+              key={key}
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '1.8fr 80px 80px 90px',
+                gap: 12,
+                padding: '10px 12px',
+                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 500 }}>{label} Risk</div>
+                <div style={{ fontSize: 11, color: 'var(--text-secondary)', marginTop: 2 }}>{desc}</div>
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 14, color: riskBarColor(score), fontWeight: 600 }}>
+                {score}
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-secondary)' }}>
+                ×&nbsp;{weights[key]}%
+              </div>
+              <div style={{ textAlign: 'right', fontSize: 13, color: 'var(--text-primary)', fontVariantNumeric: 'tabular-nums' }}>
+                {contribution.toFixed(1)}
+              </div>
+            </div>
+          )
+        })}
+
+        {/* Weighted sum + final score */}
+        {(() => {
+          const total = weights.recruitment + weights.regulatory + weights.data_quality + weights.compliance + weights.budget
+          const weightedSum =
+            report.risks.recruitment * (weights.recruitment / 100) +
+            report.risks.regulatory * (weights.regulatory / 100) +
+            report.risks.data_quality * (weights.data_quality / 100) +
+            report.risks.compliance * (weights.compliance / 100) +
+            report.risks.budget * (weights.budget / 100)
+          const customScore = Math.max(0, Math.min(100, Math.round(100 - weightedSum)))
+          const customGrade =
+            customScore >= 85 ? 'Excellent'
+            : customScore >= 70 ? 'Good'
+            : customScore >= 50 ? 'Moderate'
+            : customScore >= 30 ? 'Poor'
+            : 'Not Feasible'
+          const usingCustom = total === 100 && (
+            weights.recruitment !== DEFAULT_WEIGHTS.recruitment ||
+            weights.regulatory !== DEFAULT_WEIGHTS.regulatory ||
+            weights.data_quality !== DEFAULT_WEIGHTS.data_quality ||
+            weights.compliance !== DEFAULT_WEIGHTS.compliance ||
+            weights.budget !== DEFAULT_WEIGHTS.budget
+          )
+          const displayScore = total === 100 ? customScore : report.feasibility_score
+          const displayGrade = total === 100 ? customGrade : report.grade
+
+          return (
+            <>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.8fr 80px 80px 90px',
+                  gap: 12,
+                  padding: '10px 12px',
+                  borderTop: '1px solid var(--slate-light)',
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', gridColumn: '1 / 4' }}>
+                  Weighted risk average
+                  {total !== 100 && (
+                    <span style={{ color: 'var(--red)', marginLeft: 8 }}>
+                      (weights sum to {total}% — adjust to 100% to recalculate)
+                    </span>
+                  )}
+                </div>
+                <div style={{ textAlign: 'right', fontSize: 14, color: 'var(--text-primary)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                  {total === 100 ? weightedSum.toFixed(1) : '—'}
+                </div>
+              </div>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1.8fr 80px 80px 90px',
+                  gap: 12,
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  backgroundColor: usingCustom ? 'rgba(250,204,21,0.08)' : 'rgba(6,182,212,0.08)',
+                  border: usingCustom ? '1px solid rgba(250,204,21,0.2)' : '1px solid transparent',
+                  alignItems: 'center',
+                  marginTop: 4,
+                }}
+              >
+                <div style={{ fontSize: 13, color: usingCustom ? 'var(--yellow)' : 'var(--cyan)', fontWeight: 600, gridColumn: '1 / 4' }}>
+                  {total === 100
+                    ? `100 − ${weightedSum.toFixed(1)} = Feasibility Score`
+                    : 'Feasibility Score (reported)'}
+                  {usingCustom && (
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400, marginLeft: 8 }}>
+                      custom weights applied
+                    </span>
+                  )}
+                  {!usingCustom && Math.abs(report.feasibility_score - Math.round(100 - weightedSum)) > 1 && total === 100 && (
+                    <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 400, marginLeft: 8 }}>
+                      (adjusted for low-complexity country portfolio)
+                    </span>
+                  )}
+                </div>
+                <div
+                  style={{
+                    textAlign: 'right',
+                    fontFamily: '"DM Serif Display", serif',
+                    fontSize: 22,
+                    color: gradeColor(displayGrade),
+                  }}
+                >
+                  {displayScore}
+                </div>
+              </div>
+            </>
+          )
+        })()}
+      </div>
+
       {/* What If Panel */}
       <WhatIfPanel
         studyInput={studyInput}
         setStudyInput={setStudyInput}
         onRun={onRun}
         isLoading={isLoading}
+        weights={weights}
+        onWeightsChange={setWeights}
+        risks={report.risks}
       />
 
       {/* Row 2 — KPI Cards */}
@@ -429,7 +617,10 @@ const FeasibilityReportTab: React.FC<Props> = ({
 
             return (
               <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-                <div style={{ minWidth: 180, color: 'var(--text-secondary)', fontSize: 14 }}>{label}</div>
+                <div style={{ minWidth: 180, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{label}</span>
+                  <RiskTooltip text={RISK_TOOLTIPS[key]} />
+                </div>
                 <div style={{ flex: 1, position: 'relative' }}>
                   {/* Industry avg label */}
                   <div
@@ -486,7 +677,95 @@ const FeasibilityReportTab: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Row 4 — Study Timeline */}
+      {/* Row 4 — Country Breakdown */}
+      {studyInput.countries.length > 0 && (
+        <div style={sectionCard}>
+          <h3 style={sectionTitle}>
+            Country Breakdown
+            <span style={{ fontSize: 13, fontFamily: 'Inter, sans-serif', fontWeight: 400, color: 'var(--text-secondary)', marginLeft: 10 }}>
+              {studyInput.countries.length} {studyInput.countries.length === 1 ? 'country' : 'countries'}
+            </span>
+          </h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {/* Header row */}
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1.5fr 1.5fr 100px',
+                gap: 12,
+                padding: '0 12px 8px',
+                borderBottom: '1px solid var(--slate-light)',
+                fontSize: 11,
+                color: 'var(--text-secondary)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.06em',
+              }}
+            >
+              <span>Country</span>
+              <span>Region</span>
+              <span>Regulatory Body</span>
+              <span>Complexity</span>
+            </div>
+            {studyInput.countries.map((c) => {
+              const flag = [...c.code.toUpperCase()].map(ch => String.fromCodePoint(ch.charCodeAt(0) + 127397)).join('')
+              const complexityColor =
+                c.complexity === 'high' ? 'var(--red)'
+                : c.complexity === 'moderate' ? 'var(--yellow)'
+                : 'var(--green)'
+              const notes = COUNTRY_NOTES[c.code]
+              return (
+                <div
+                  key={c.code}
+                  style={{
+                    padding: '12px 14px',
+                    borderRadius: 8,
+                    backgroundColor: 'var(--slate-light)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6,
+                  }}
+                >
+                  {/* Top row */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: '2fr 1.5fr 1.5fr 100px',
+                      gap: 12,
+                      alignItems: 'center',
+                    }}
+                  >
+                    <span style={{ fontSize: 14, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ fontSize: 18, lineHeight: 1 }}>{flag}</span>
+                      {c.name}
+                    </span>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{c.region}</span>
+                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{c.regulatoryBody}</span>
+                    <span
+                      style={{
+                        fontSize: 11,
+                        fontWeight: 600,
+                        color: complexityColor,
+                        textTransform: 'capitalize',
+                        letterSpacing: '0.04em',
+                      }}
+                    >
+                      {c.complexity}
+                    </span>
+                  </div>
+                  {/* Notes */}
+                  {notes && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6, paddingLeft: 26 }}>
+                      {notes}
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Row 6 — Study Timeline */}
       <div style={sectionCard}>
         <h3 style={sectionTitle}>Study Timeline</h3>
         <div style={{ overflowX: 'auto', paddingBottom: 4 }}>
@@ -517,7 +796,7 @@ const FeasibilityReportTab: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Row 5 — Strategic Recommendations */}
+      {/* Row 7 — Strategic Recommendations */}
       <div style={sectionCard}>
         <h3 style={sectionTitle}>Strategic Recommendations</h3>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 16 }}>
@@ -552,6 +831,50 @@ const FeasibilityReportTab: React.FC<Props> = ({
           ))}
         </div>
       </div>
+    </div>
+  )
+}
+
+const RiskTooltip: React.FC<{ text: string }> = ({ text }) => {
+  const [show, setShow] = useState(false)
+  return (
+    <div style={{ position: 'relative' }}>
+      <button
+        onMouseEnter={() => setShow(true)}
+        onMouseLeave={() => setShow(false)}
+        style={{
+          background: 'none',
+          border: 'none',
+          color: 'var(--text-secondary)',
+          cursor: 'pointer',
+          fontSize: 13,
+          padding: '0 2px',
+          lineHeight: 1,
+        }}
+      >
+        ⓘ
+      </button>
+      {show && (
+        <div
+          style={{
+            position: 'absolute',
+            left: 0,
+            top: 22,
+            width: 300,
+            backgroundColor: '#1a2540',
+            border: '1px solid var(--slate-light)',
+            borderRadius: 8,
+            padding: 12,
+            fontSize: 12,
+            color: 'var(--text-secondary)',
+            lineHeight: 1.6,
+            zIndex: 50,
+            boxShadow: '0 8px 32px rgba(0,0,0,0.4)',
+          }}
+        >
+          {text}
+        </div>
+      )}
     </div>
   )
 }
