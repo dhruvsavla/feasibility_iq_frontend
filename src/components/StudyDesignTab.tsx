@@ -116,11 +116,22 @@ const TagButton: React.FC<{ label: string; selected: boolean; onClick: () => voi
 const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isLoading }) => {
   const [endpointHint, setEndpointHint] = useState<string | null>(null)
   const [extracting, setExtracting] = useState(false)
+  const [extractStep, setExtractStep] = useState(0)
   const [extractError, setExtractError] = useState<string | null>(null)
   const [extractedFields, setExtractedFields] = useState<string[]>([])
   const [extractionNotes, setExtractionNotes] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const stepTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const EXTRACT_STEPS = [
+    'Reading PDF pages…',
+    'Parsing document structure…',
+    'Identifying study parameters…',
+    'Extracting eligibility criteria…',
+    'Mapping endpoints and objectives…',
+    'Finalising extraction…',
+  ]
 
   const handleProtocolFile = async (file: File) => {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
@@ -128,9 +139,15 @@ const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isL
       return
     }
     setExtracting(true)
+    setExtractStep(0)
     setExtractError(null)
     setExtractedFields([])
     setExtractionNotes(null)
+
+    stepTimerRef.current = setInterval(() => {
+      setExtractStep((s) => Math.min(s + 1, EXTRACT_STEPS.length - 1))
+    }, 4000)
+
     try {
       const result = await extractProtocol(file)
       setStudyInput((prev) => {
@@ -152,6 +169,7 @@ const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isL
     } catch (err) {
       setExtractError(err instanceof Error ? err.message : 'Extraction failed')
     } finally {
+      if (stepTimerRef.current) clearInterval(stepTimerRef.current)
       setExtracting(false)
     }
   }
@@ -231,7 +249,7 @@ const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isL
             }}
           />
           {extracting ? (
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
               <div style={{
                 width: 24, height: 24,
                 border: '3px solid var(--slate)',
@@ -239,7 +257,18 @@ const StudyDesignTab: React.FC<Props> = ({ studyInput, setStudyInput, onRun, isL
                 borderRadius: '50%',
                 animation: 'spin 0.7s linear infinite',
               }} />
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Extracting study parameters…</div>
+              <div style={{ fontSize: 13, color: 'var(--cyan)', fontWeight: 500 }}>
+                {EXTRACT_STEPS[extractStep]}
+              </div>
+              <div style={{ display: 'flex', gap: 5 }}>
+                {EXTRACT_STEPS.map((_, i) => (
+                  <div key={i} style={{
+                    width: 6, height: 6, borderRadius: '50%',
+                    backgroundColor: i <= extractStep ? 'var(--cyan)' : 'rgba(255,255,255,0.15)',
+                    transition: 'background-color 0.3s ease',
+                  }} />
+                ))}
+              </div>
             </div>
           ) : (
             <>
